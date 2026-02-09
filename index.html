@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>INDU BiRd</title>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; background-color: #111; touch-action: none;
+        }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #scoreBoard { 
+            position: absolute; top: 20px; left: 50%;
+            transform: translateX(-50%); /* Keeps score centered over the play area */
+            color: white; font-family: sans-serif; font-weight: bold;
+            text-shadow: 2px 2px #000; text-align: center; pointer-events: none; z-index: 10;
+        }
+        #currentScore { font-size: 50px; }
+        #topScore { font-size: 20px; color: #FFD700; }
+    </style>
+</head>
+<body>
+    <div id="scoreBoard">
+        <div id="currentScore">0</div>
+        <div id="topScore">Best: 0</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('currentScore');
+    const topScoreEl = document.getElementById('topScore');
+
+    const pipeImg = new Image(); pipeImg.src = 'pipe.png';
+    const bgImg = new Image(); bgImg.src = 'flappybg.jpg';
+    const birdImg = new Image(); birdImg.src = 'bird.png';
+    const yeetSound = new Audio('yeet.mp3');
+    const omgSound = new Audio('omg.mp3');
+
+    let highScore = localStorage.getItem('flappyHighScore') || 0;
+    topScoreEl.innerText = "Best: " + highScore;
+
+    // --- GAME DESIGN LIMITS ---
+    let gameWidth, offsetX, unit, birdSize, pipeWidth, pipeGap, gravity, jumpForce, speed;
+
+    function initScaling() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // This prevents the "Over-Expanded" PC look
+        // We cap the play area width to a vertical ratio (9:16)
+        gameWidth = Math.min(canvas.width, canvas.height * 0.6);
+        offsetX = (canvas.width - gameWidth) / 2; // Centers the game lane
+        
+        unit = canvas.height / 100; 
+        birdSize = unit * 7;
+        pipeWidth = unit * 10;
+        pipeGap = unit * 26;
+        gravity = unit * 0.05;
+        jumpForce = unit * -1.0;
+        speed = unit * 0.45;
+
+        bird.x = offsetX + (gameWidth * 0.2); // Bird stays in the lane
+        if (!gameActive) bird.y = canvas.height / 2;
+    }
+
+    let score = 0, gameActive = false, isGameOver = false, bgX = 0;
+    const bird = { x: 0, y: 0, velocity: 0, rotation: 0, mouthOpen: 0 };
+    let pipes = [];
+
+    window.addEventListener('resize', initScaling);
+    initScaling();
+
+    function handleAction(e) {
+        if (e) e.preventDefault();
+        if (isGameOver) {
+            if (omgSound.paused || omgSound.ended) resetGame();
+        } else if (gameActive) {
+            bird.velocity = jumpForce;
+            bird.mouthOpen = 15;
+            yeetSound.currentTime = 0; yeetSound.play();
+        } else {
+            resetGame();
+        }
+    }
+
+    window.addEventListener('keydown', (e) => { if (e.code === 'Space') handleAction(e); });
+    canvas.addEventListener('touchstart', handleAction, { passive: false });
+    canvas.addEventListener('mousedown', (e) => { if (e.button === 0) handleAction(e); });
+
+    function resetGame() {
+        score = 0; scoreEl.innerText = "0";
+        bird.y = canvas.height / 2; bird.velocity = 0;
+        pipes = []; gameActive = true; isGameOver = false;
+    }
+
+    function update() {
+        // Background is full screen for immersion
+        bgX -= (speed * 0.2);
+        if (bgX <= -canvas.width) bgX = 0;
+        ctx.drawImage(bgImg, bgX, 0, canvas.width, canvas.height);
+        ctx.drawImage(bgImg, bgX + canvas.width, 0, canvas.width, canvas.height);
+
+        // Optional: Darken the non-playable sides on PC
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(0, 0, offsetX, canvas.height);
+        ctx.fillRect(offsetX + gameWidth, 0, offsetX, canvas.height);
+
+        for (let i = pipes.length - 1; i >= 0; i--) {
+            if (gameActive) pipes[i].x -= speed;
+            
+            // Draw within the lane
+            ctx.drawImage(pipeImg, pipes[i].x, 0, pipeWidth, pipes[i].top);
+            ctx.save();
+            let bHeight = canvas.height - (pipes[i].top + pipeGap);
+            ctx.translate(pipes[i].x + pipeWidth/2, pipes[i].top + pipeGap + bHeight/2);
+            ctx.rotate(Math.PI);
+            ctx.drawImage(pipeImg, -pipeWidth/2, -bHeight/2, pipeWidth, bHeight);
+            ctx.restore();
+
+            // Collision logic
+            if (gameActive && bird.x + 10 < pipes[i].x + pipeWidth && bird.x + birdSize - 10 > pipes[i].x) {
+                if (bird.y + 10 < pipes[i].top || bird.y + birdSize - 10 > pipes[i].top + pipeGap) {
+                    gameActive = false; isGameOver = true; omgSound.play();
+                }
+            }
+
+            if (gameActive && !pipes[i].passed && pipes[i].x < bird.x) {
+                score++; scoreEl.innerText = score; pipes[i].passed = true;
+            }
+            // Delete pipes when they leave the LANE, not the screen
+            if (pipes[i].x < offsetX - pipeWidth) pipes.splice(i, 1);
+        }
+
+        if (gameActive) {
+            bird.velocity += gravity;
+            bird.y += bird.velocity;
+            // Spawn pipes at the edge of the LANE
+            if (pipes.length === 0 || pipes[pipes.length - 1].x < (offsetX + gameWidth) - (unit * 35)) {
+                const top = Math.random() * (canvas.height - pipeGap - unit * 20) + unit * 10;
+                pipes.push({ x: offsetX + gameWidth, top: top, passed: false });
+            }
+            if (bird.y + birdSize > canvas.height || bird.y < 0) { gameActive = false; isGameOver = true; omgSound.play(); }
+        }
+
+        // Draw bird
+        ctx.save();
+        ctx.translate(bird.x + birdSize / 2, bird.y + birdSize / 2);
+        bird.rotation = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, bird.velocity * 0.08));
+        ctx.rotate(bird.rotation);
+        ctx.drawImage(birdImg, -birdSize / 2, -birdSize / 2, birdSize, birdSize);
+        if (bird.mouthOpen > 0) {
+            ctx.fillStyle = "#660000"; ctx.beginPath();
+            ctx.ellipse(unit, unit, unit*1.5, unit*2*(bird.mouthOpen/15), 0, 0, Math.PI*2);
+            ctx.fill(); bird.mouthOpen--;
+        }
+        ctx.restore();
+
+        if (!gameActive) {
+            ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = `bold ${unit*5}px Arial`;
+            ctx.strokeText(isGameOver ? "YEETED!" : "TAP TO START", canvas.width/2, canvas.height/2);
+            ctx.fillText(isGameOver ? "YEETED!" : "TAP TO START", canvas.width/2, canvas.height/2);
+        }
+        requestAnimationFrame(update);
+    }
+    update();
+</script>
+</body>
+</html>
+
